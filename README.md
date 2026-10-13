@@ -1,1 +1,1 @@
-# docker-passbolt
+# Passbolt in Docker
