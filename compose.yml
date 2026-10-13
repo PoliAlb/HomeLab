@@ -1,0 +1,38 @@
+services:
+  db:
+    image: mariadb:10.11
+    restart: unless-stopped
+    environment:
+      MYSQL_RANDOM_ROOT_PASSWORD: "true"
+      MYSQL_DATABASE: passbolt
+      MYSQL_USER: passbolt
+      MYSQL_PASSWORD: cambiami_password_db
+    volumes:
+      - database_volume:/var/lib/mysql
+
+  passbolt:
+    image: passbolt/passbolt:latest-ce
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      APP_FULL_BASE_URL: https://localhost
+      DATASOURCES_DEFAULT_HOST: db
+      DATASOURCES_DEFAULT_USERNAME: passbolt
+      DATASOURCES_DEFAULT_PASSWORD: cambiami_password_db
+      DATASOURCES_DEFAULT_DATABASE: passbolt
+    volumes:
+      - gpg_volume:/etc/passbolt/gpg
+      - jwt_volume:/etc/passbolt/jwt
+    command:
+      - /bin/bash
+      - -c
+      - /usr/bin/wait-for.sh -t 0 db:3306 -- /docker-entrypoint.sh
+    ports:
+      - "80:80"
+      - "443:443"
+
+volumes:
+  database_volume:
+  gpg_volume:
+  jwt_volume:
