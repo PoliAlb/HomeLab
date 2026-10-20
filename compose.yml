@@ -7,6 +7,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD}
       PASSBOLT_DB_PASSWORD: ${PASSBOLT_DB_PASSWORD}
       GITLAB_DB_PASSWORD: ${GITLAB_DB_PASSWORD}
+      NEXTCLOUD_DB_PASSWORD: ${NEXTCLOUD_DB_PASSWORD}
     volumes:
       - database_volume:/var/lib/postgresql/data
       - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
@@ -70,6 +71,25 @@ services:
       - "2222:22"
     shm_size: "256m"
 
+  nextcloud:
+    image: nextcloud:apache
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_DB: nextcloud
+      POSTGRES_USER: nextcloud
+      POSTGRES_PASSWORD: ${NEXTCLOUD_DB_PASSWORD}
+      NEXTCLOUD_ADMIN_USER: admin
+      NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD}
+      NEXTCLOUD_TRUSTED_DOMAINS: localhost
+    volumes:
+      - nextcloud_data:/var/www/html
+    ports:
+      - "8082:80"
+
 volumes:
   database_volume:
   gpg_volume:
@@ -77,3 +97,4 @@ volumes:
   gitlab_config:
   gitlab_logs:
   gitlab_data:
+  nextcloud_data:
