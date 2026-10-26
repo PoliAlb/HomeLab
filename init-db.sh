@@ -15,4 +15,6 @@ EOSQL
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" -d gitlabhq_production <<-EOSQL
   CREATE EXTENSION IF NOT EXISTS pg_trgm;
   CREATE EXTENSION IF NOT EXISTS btree_gist;
+  CREATE EXTENSION IF NOT EXISTS amcheck;
+  CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 EOSQL

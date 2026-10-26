@@ -2,6 +2,7 @@ services:
   db:
     image: postgres:16
     restart: unless-stopped
+    command: postgres -c max_locks_per_transaction=512
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD}
@@ -26,6 +27,7 @@ services:
     environment:
       APP_FULL_BASE_URL: https://localhost:8443
       DATASOURCES_DEFAULT_DRIVER: Cake\Database\Driver\Postgres
+      DATASOURCES_DEFAULT_ENCODING: utf8
       DATASOURCES_DEFAULT_HOST: db
       DATASOURCES_DEFAULT_PORT: 5432
       DATASOURCES_DEFAULT_USERNAME: passbolt
@@ -51,6 +53,8 @@ services:
         condition: service_healthy
     environment:
       GITLAB_DB_PASSWORD: ${GITLAB_DB_PASSWORD}
+      GITLAB_ROOT_EMAIL: ${GITLAB_ROOT_EMAIL}
+      GITLAB_ROOT_PASSWORD: ${GITLAB_ROOT_PASSWORD}
       GITLAB_OMNIBUS_CONFIG: |
         external_url 'http://localhost:8081'
         nginx['listen_port'] = 80
