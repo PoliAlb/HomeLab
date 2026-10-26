@@ -94,6 +94,21 @@ services:
     ports:
       - "8082:80"
 
+  dns:
+    image: pihole/pihole:latest
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Rome
+      FTLCONF_webserver_api_password: ${PIHOLE_PASSWORD}
+      FTLCONF_dns_listeningMode: all
+      FTLCONF_dns_upstreams: "1.1.1.1;9.9.9.9"
+    volumes:
+      - pihole_data:/etc/pihole
+    ports:
+      - "5300:53/udp"
+      - "5300:53/tcp"
+      - "8083:80/tcp"
+
 volumes:
   database_volume:
   gpg_volume:
@@ -102,3 +117,4 @@ volumes:
   gitlab_logs:
   gitlab_data:
   nextcloud_data:
+  pihole_data:
