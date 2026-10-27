@@ -1,20 +1,18 @@
 # HomeLab
 
+Questo homelab non gestisce anche le misure di sicurezza che per come è gestito il progetto vengono gestite su un'altra macchina che funge da reverse proxy
+
+## 🚨 REQUISITI MINIMI DI HARDWARE 🚨
+
+- **RAM**: 4,3 GB 
+
 ## Setup
 
 ### 🔑 crazioni delle chiavi 
 
 ```bash
-cat > .env <<EOF
-POSTGRES_ADMIN_PASSWORD=$(openssl rand -hex 17)
-PASSBOLT_DB_PASSWORD=$(openssl rand -hex 17)
-GITLAB_DB_PASSWORD=$(openssl rand -hex 17)
-NEXTCLOUD_DB_PASSWORD=$(openssl rand -hex 17)
-NEXTCLOUD_ADMIN_PASSWORD=$(openssl rand -hex 17)
-GITLAB_ROOT_EMAIL=tuaemail@example.com
-GITLAB_ROOT_PASSWORD=$(openssl rand -hex 17)
-PIHOLE_PASSWORD=$(openssl rand -hex 17)
-EOF
+chmod +x env.sh
+./env.sh
 ```
 Questa operazione può essere fatta una sola volta per ogni homelab.
 
@@ -22,6 +20,8 @@ Questa operazione può essere fatta una sola volta per ogni homelab.
 ```bash
 docker compose -f compose.yml up -d
 ```
+
+## [Dozzle (control pannel)](http://localhost:8084)
 
 ## 🔐 [Passbolt](https://localhost:8443)
 
