@@ -5,7 +5,7 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "3"
  
-services:
+oservices:
   # ------------------------------------------- Ingresso: reverse proxy HTTPS
   caddy:
     image: caddy:2.10-alpine
