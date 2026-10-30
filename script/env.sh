@@ -1,10 +1,11 @@
-if [ -e script/.env ]; then echo "script/.env esiste già"; else
+if [ -e .env ]; then echo ".env esiste già"; else
   DOZZLE_PW=$(openssl rand -hex 12)
   DOZZLE_HASH=$(docker run --rm amir20/dozzle generate admin \
     --password "$DOZZLE_PW" --email admin@example.com --name Admin \
     | awk '/password:/{print $2}')
 
-  cat > script/.env <<EOF
+  cat > .env <<EOF
+LAB_DOMAIN=lab.internal
 DOCKER_SOCK=/run/user/$(id -u)/docker.sock
 PASSBOLT_DB_PASSWORD=$(openssl rand -hex 24)
 GITLAB_DB_PASSWORD=$(openssl rand -hex 24)
@@ -16,6 +17,7 @@ PIHOLE_PASSWORD=$(openssl rand -hex 24)
 DOZZLE_ADMIN_EMAIL=admin@example.com
 DOZZLE_ADMIN_HASH='${DOZZLE_HASH}'
 DOZZLE_ADMIN_PASSWORD=${DOZZLE_PW}
+NB_SETUP_KEY=
 EOF
-  chmod 600 script/.env
+  chmod 600 .env
 fi

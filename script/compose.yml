@@ -6,8 +6,44 @@ x-logging: &default-logging
     max-file: "3"
  
 services:
+  # ------------------------------------------- Ingresso: reverse proxy HTTPS
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      - passbolt
+      - gitlab
+      - nextcloud
+      - dns
+      - dozzle
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    volumes:
+      - caddy_data:/data        # contiene la CA interna: va inclusa nei backup
+      - caddy_config:/config
+    networks:
+      default:
+        ipv4_address: 172.30.10.10
+        aliases:                # i container risolvono i nomi pubblici verso caddy
+          - passbolt.${LAB_DOMAIN:-lab.internal}
+          - gitlab.${LAB_DOMAIN:-lab.internal}
+          - cloud.${LAB_DOMAIN:-lab.internal}
+          - pihole.${LAB_DOMAIN:-lab.internal}
+          - logs.${LAB_DOMAIN:-lab.internal}
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 443 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:       { memory: 128m }
+        reservations: { memory: 32m }
+ 
   # ---------------------------------------------------------------- Passbolt
-
   db-passbolt:
     image: postgres:16
     restart: unless-stopped
@@ -36,7 +72,7 @@ services:
       db-passbolt:
         condition: service_healthy
     environment:
-      APP_FULL_BASE_URL: https://localhost:8443
+      APP_FULL_BASE_URL: https://passbolt.${LAB_DOMAIN:-lab.internal}
       DATASOURCES_DEFAULT_DRIVER: Cake\Database\Driver\Postgres
       DATASOURCES_DEFAULT_ENCODING: utf8
       DATASOURCES_DEFAULT_HOST: db-passbolt
@@ -51,9 +87,6 @@ services:
       - /bin/bash
       - -c
       - /usr/bin/wait-for.sh -t 0 db-passbolt:5432 -- /docker-entrypoint.sh
-    ports:
-      - "8080:80"
-      - "8443:443"
     networks: [passbolt_net, default]
     healthcheck:
       test: ["CMD-SHELL", "curl -fsk -o /dev/null https://localhost/healthcheck/status.json || exit 1"]
@@ -93,7 +126,7 @@ services:
   gitlab:
     image: gitlab/gitlab-ce:latest
     restart: unless-stopped
-    hostname: localhost
+    hostname: gitlab.${LAB_DOMAIN:-lab.internal}
     depends_on:
       db-gitlab:
         condition: service_healthy
@@ -102,9 +135,14 @@ services:
       GITLAB_ROOT_EMAIL: ${GITLAB_ROOT_EMAIL}
       GITLAB_ROOT_PASSWORD: ${GITLAB_ROOT_PASSWORD}
       GITLAB_OMNIBUS_CONFIG: |
-        external_url 'http://localhost:8081'
+        external_url 'https://gitlab.${LAB_DOMAIN:-lab.internal}'
+        # HTTPS lo termina Caddy: nginx interno resta in HTTP sulla 80
+        letsencrypt['enable'] = false
+        nginx['listen_https'] = false
         nginx['listen_port'] = 80
-        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+        nginx['proxy_set_headers'] = { "X-Forwarded-Proto" => "https", "X-Forwarded-Ssl" => "on" }
+        # SSH: nome dedicato che punta direttamente al container (porta 22)
+        gitlab_rails['gitlab_ssh_host'] = 'git-ssh.${LAB_DOMAIN:-lab.internal}'
         postgresql['enable'] = false
         gitlab_rails['db_adapter'] = 'postgresql'
         gitlab_rails['db_encoding'] = 'utf8'
@@ -120,11 +158,11 @@ services:
       - gitlab_config:/etc/gitlab
       - gitlab_logs:/var/log/gitlab
       - gitlab_data:/var/opt/gitlab
-    ports:
-      - "8081:80"
-      - "2222:22"
     shm_size: "256m"
-    networks: [gitlab_net, default]
+    networks:
+      gitlab_net:
+      default:
+        ipv4_address: 172.30.10.20
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost/-/health || exit 1"]
       interval: 30s
@@ -175,15 +213,19 @@ services:
       POSTGRES_PASSWORD: ${NEXTCLOUD_DB_PASSWORD}
       NEXTCLOUD_ADMIN_USER: admin
       NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD}
-      NEXTCLOUD_TRUSTED_DOMAINS: localhost
+      NEXTCLOUD_TRUSTED_DOMAINS: cloud.${LAB_DOMAIN:-lab.internal}
+      # Dietro reverse proxy: link e redirect devono essere https
+      OVERWRITEHOST: cloud.${LAB_DOMAIN:-lab.internal}
+      OVERWRITEPROTOCOL: https
+      OVERWRITECLIURL: https://cloud.${LAB_DOMAIN:-lab.internal}
+      TRUSTED_PROXIES: 172.30.10.10
       PHP_MEMORY_LIMIT: 512M
       PHP_UPLOAD_LIMIT: 2G
     volumes:
       - nextcloud_data:/var/www/html
-    ports:
-      - "8082:80"
     networks: [nextcloud_net, default]
     healthcheck:
+      # status.php è raggiungibile solo se l'host è tra i trusted_domains: localhost resta ammesso dall'installer
       test: ["CMD-SHELL", "curl -fs http://localhost/status.php | grep -q '\"installed\":true' || exit 1"]
       interval: 30s
       timeout: 10s
@@ -199,6 +241,8 @@ services:
           memory: 256m
  
   # ---------------------------------------------------------------- Pi-hole
+  # Nessuna porta pubblicata: il DNS è raggiungibile solo dalla rete del compose
+  # (quindi solo tramite VPN). Il dominio interno è un wildcard verso caddy.
   dns:
     image: pihole/pihole:latest
     restart: unless-stopped
@@ -207,12 +251,12 @@ services:
       FTLCONF_webserver_api_password: ${PIHOLE_PASSWORD}
       FTLCONF_dns_listeningMode: all
       FTLCONF_dns_upstreams: "1.1.1.1;9.9.9.9"
+      FTLCONF_misc_dnsmasq_lines: "address=/${LAB_DOMAIN:-lab.internal}/172.30.10.10;address=/git-ssh.${LAB_DOMAIN:-lab.internal}/172.30.10.20"
     volumes:
       - pihole_data:/etc/pihole
-    ports:
-      - "5300:53/udp"
-      - "5300:53/tcp"
-      - "8083:80/tcp"
+    networks:
+      default:
+        ipv4_address: 172.30.10.53
     healthcheck:
       test: ["CMD-SHELL", "dig +short +norecurse +retry=0 @127.0.0.1 pi.hole || exit 1"]
       interval: 30s
@@ -239,8 +283,6 @@ services:
     configs:
       - source: dozzle_users
         target: /data/users.yml
-    ports:
-      - "127.0.0.1:8084:8080"
     healthcheck:
       test: ["CMD", "/dozzle", "healthcheck"]
       interval: 30s
@@ -252,8 +294,70 @@ services:
         limits:       { memory: 128m }
         reservations: { memory: 32m }
  
-# Utenti di Dozzle: il file viene creato da Compose (serve Compose >= 2.23.1)
+  # --------------------------------------- VPN (opzionale): peer NetBird
+  # Si avvia solo con:  docker compose --profile vpn up -d
+  # Fa da "routing peer": espone 172.30.10.0/24 ai client della VPN.
+  netbird:
+    image: netbirdio/netbird:latest   # fissa un tag dopo la prima prova
+    profiles: [vpn]
+    restart: unless-stopped
+    cap_add: [NET_ADMIN, SYS_ADMIN, SYS_RESOURCE]
+    sysctls:
+      net.ipv4.ip_forward: 1
+    environment:
+      NB_SETUP_KEY: ${NB_SETUP_KEY:-}
+      NB_HOSTNAME: homelab-gw
+      # NB_MANAGEMENT_URL: https://netbird.tuodominio.tld:443   # solo se self-hosted
+    volumes:
+      - netbird_data:/etc/netbird
+    networks:
+      default:
+        ipv4_address: 172.30.10.2
+    logging: *default-logging
+    deploy:
+      resources:
+        limits: { memory: 128m }
+ 
+# Caddyfile e utenti di Dozzle: creati da Compose (serve Compose >= 2.23.1)
 configs:
+  caddyfile:
+    content: |
+      {
+      	admin off
+      	local_certs      # certificati firmati dalla CA interna di Caddy
+      }
+ 
+      passbolt.${LAB_DOMAIN:-lab.internal} {
+      	reverse_proxy https://passbolt:443 {
+      		transport http {
+      			tls_insecure_skip_verify   # certificato self-signed di Passbolt, solo rete interna
+      		}
+      	}
+      }
+ 
+      gitlab.${LAB_DOMAIN:-lab.internal} {
+      	request_body {
+      		max_size 2GB
+      	}
+      	reverse_proxy gitlab:80
+      }
+ 
+      cloud.${LAB_DOMAIN:-lab.internal} {
+      	request_body {
+      		max_size 2GB
+      	}
+      	redir /.well-known/carddav /remote.php/dav 301
+      	redir /.well-known/caldav /remote.php/dav 301
+      	reverse_proxy nextcloud:80
+      }
+ 
+      pihole.${LAB_DOMAIN:-lab.internal} {
+      	reverse_proxy dns:80
+      }
+ 
+      logs.${LAB_DOMAIN:-lab.internal} {
+      	reverse_proxy dozzle:8080
+      }
   dozzle_users:
     content: |
       users:
@@ -263,6 +367,9 @@ configs:
           password: ${DOZZLE_ADMIN_HASH}
  
 volumes:
+  caddy_data:
+  caddy_config:
+  netbird_data:
   db_passbolt:
   db_gitlab:
   db_nextcloud:
@@ -275,6 +382,10 @@ volumes:
   pihole_data:
  
 networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.10.0/24
   passbolt_net:
     internal: true
   gitlab_net:
