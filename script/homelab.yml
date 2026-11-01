@@ -1,36 +1,92 @@
+# Laboratorio: accesso SOLO via VPN NetBird (peer condiviso con Caddy).
+# Prerequisito: il progetto netbird-server/ deve essere già avviato
+# (crea la rete "nbnet" e il volume "nb_caddy_data" usati qui).
+#
+# Avvio in due tempi (una tantum):
+#   1) docker compose up -d netbird     -> il peer si registra, ottiene l'IP 100.x
+#   2) scrivi l'IP in .env (NB_PEER_IP) -> docker compose up -d
+
 # Rotazione dei log: evita che i log JSON di Docker riempiano il disco
 x-logging: &default-logging
   driver: json-file
   options:
     max-size: "10m"
     max-file: "3"
- 
-oservices:
-  # ------------------------------------------- Ingresso: reverse proxy HTTPS
-  caddy:
-    image: caddy:2.10-alpine
+
+services:
+  # ---------------------------------------------------------- VPN: peer NetBird
+  # Caddy vive nel suo network namespace (network_mode: service:netbird),
+  # quindi ascolta direttamente sull'IP 100.x del peer.
+  # Se ricrei questo container, ricrea anche caddy (docker compose up -d lo fa da solo).
+  netbird:
+    image: netbirdio/netbird:latest   # fissa un tag dopo la prima prova
     restart: unless-stopped
-    depends_on:
-      - passbolt
-      - gitlab
-      - nextcloud
-      - dns
-      - dozzle
-    configs:
-      - source: caddyfile
-        target: /etc/caddy/Caddyfile
+    cap_add: [NET_ADMIN, SYS_ADMIN, SYS_RESOURCE]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      NB_SETUP_KEY: ${NB_SETUP_KEY:?crea la setup key nella dashboard NetBird e scrivila in .env}
+      NB_MANAGEMENT_URL: ${NB_MANAGEMENT_URL:-https://netbird.home.arpa:8443}
+      NB_HOSTNAME: homelab-gw
+      # Questo peer non deve prendere i DNS dalla VPN: caddy-l4 usa la porta 53 del peer
+      # e il DNS del container deve restare quello di Docker.
+      NB_DISABLE_DNS: "true"
+      # Il server NetBird usa la CA interna del suo Caddy: la rendiamo fidata
+      SSL_CERT_FILE: /nbca/caddy/pki/authorities/local/root.crt
     volumes:
-      - caddy_data:/data        # contiene la CA interna: va inclusa nei backup
-      - caddy_config:/config
+      - netbird_data:/etc/netbird
+      - nb_caddy_data:/nbca:ro
     networks:
       default:
-        ipv4_address: 172.30.10.10
+        ipv4_address: 172.30.10.2
         aliases:                # i container risolvono i nomi pubblici verso caddy
           - passbolt.${LAB_DOMAIN:-lab.internal}
           - gitlab.${LAB_DOMAIN:-lab.internal}
           - cloud.${LAB_DOMAIN:-lab.internal}
           - pihole.${LAB_DOMAIN:-lab.internal}
           - logs.${LAB_DOMAIN:-lab.internal}
+      nbnet:                    # per raggiungere il server NetBird per nome
+    healthcheck:
+      # Sano solo quando NB_PEER_IP è valorizzato e wt0 ha davvero quell'indirizzo
+      test:
+        - CMD-SHELL
+        - '[ -n "${NB_PEER_IP:-}" ] && ip -4 addr show wt0 | grep -q "${NB_PEER_IP:-x}/"'
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:       { memory: 256m }
+        reservations: { memory: 64m }
+
+  # ------------------------------------------- Ingresso: Caddy (+ caddy-l4)
+  caddy:
+    build:
+      context: ./proxy
+    image: homelab/caddy-l4:2.10
+    restart: unless-stopped
+    network_mode: "service:netbird"
+    depends_on:
+      netbird:
+        condition: service_healthy
+      passbolt:
+        condition: service_started
+      gitlab:
+        condition: service_started
+      nextcloud:
+        condition: service_started
+      dns:
+        condition: service_started
+      dozzle:
+        condition: service_started
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    volumes:
+      - caddy_data:/data        # contiene la CA interna: va inclusa nei backup
+      - caddy_config:/config
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 443 || exit 1"]
       interval: 30s
@@ -42,7 +98,7 @@ oservices:
       resources:
         limits:       { memory: 128m }
         reservations: { memory: 32m }
- 
+
   # ---------------------------------------------------------------- Passbolt
   db-passbolt:
     image: postgres:16
@@ -64,7 +120,7 @@ oservices:
       resources:
         limits:       { memory: 512m }
         reservations: { memory: 128m }
- 
+
   passbolt:
     image: passbolt/passbolt:latest-ce
     restart: unless-stopped
@@ -99,7 +155,7 @@ oservices:
       resources:
         limits:       { memory: 512m }
         reservations: { memory: 256m }
- 
+
   # ------------------------------------------------------------------ GitLab
   db-gitlab:
     image: postgres:16
@@ -122,7 +178,7 @@ oservices:
       resources:
         limits:       { memory: 1g }
         reservations: { memory: 512m }
- 
+
   gitlab:
     image: gitlab/gitlab-ce:latest
     restart: unless-stopped
@@ -141,7 +197,7 @@ oservices:
         nginx['listen_https'] = false
         nginx['listen_port'] = 80
         nginx['proxy_set_headers'] = { "X-Forwarded-Proto" => "https", "X-Forwarded-Ssl" => "on" }
-        # SSH: nome dedicato che punta direttamente al container (porta 22)
+        # SSH: nome dedicato; caddy-l4 gira la porta 22 del peer VPN verso gitlab:22
         gitlab_rails['gitlab_ssh_host'] = 'git-ssh.${LAB_DOMAIN:-lab.internal}'
         postgresql['enable'] = false
         gitlab_rails['db_adapter'] = 'postgresql'
@@ -177,7 +233,7 @@ oservices:
           cpus: "3"
         reservations:
           memory: 3g
- 
+
   # --------------------------------------------------------------- Nextcloud
   db-nextcloud:
     image: postgres:16
@@ -199,7 +255,7 @@ oservices:
       resources:
         limits:       { memory: 512m }
         reservations: { memory: 128m }
- 
+
   nextcloud:
     image: nextcloud:apache
     restart: unless-stopped
@@ -218,7 +274,8 @@ oservices:
       OVERWRITEHOST: cloud.${LAB_DOMAIN:-lab.internal}
       OVERWRITEPROTOCOL: https
       OVERWRITECLIURL: https://cloud.${LAB_DOMAIN:-lab.internal}
-      TRUSTED_PROXIES: 172.30.10.10
+      # Caddy esce ora con l'IP del container netbird (stesso netns)
+      TRUSTED_PROXIES: 172.30.10.2
       PHP_MEMORY_LIMIT: 512M
       PHP_UPLOAD_LIMIT: 2G
     volumes:
@@ -239,19 +296,23 @@ oservices:
           cpus: "2"
         reservations:
           memory: 256m
- 
+
   # ---------------------------------------------------------------- Pi-hole
-  # Nessuna porta pubblicata: il DNS è raggiungibile solo dalla rete del compose
-  # (quindi solo tramite VPN). Il dominio interno è un wildcard verso caddy.
+  # Nessuna porta pubblicata: i client VPN arrivano alla 53 del peer e
+  # caddy-l4 gira le query qui. Il dominio interno è un wildcard verso l'IP 100.x
+  # del peer (NB_PEER_IP), dove ascoltano caddy (443) e caddy-l4 (22, 53).
   dns:
     image: pihole/pihole:latest
     restart: unless-stopped
+    depends_on:
+      netbird:
+        condition: service_healthy   # garantisce che NB_PEER_IP sia valorizzato
     environment:
       TZ: Europe/Rome
       FTLCONF_webserver_api_password: ${PIHOLE_PASSWORD}
       FTLCONF_dns_listeningMode: all
       FTLCONF_dns_upstreams: "1.1.1.1;9.9.9.9"
-      FTLCONF_misc_dnsmasq_lines: "address=/${LAB_DOMAIN:-lab.internal}/172.30.10.10;address=/git-ssh.${LAB_DOMAIN:-lab.internal}/172.30.10.20"
+      FTLCONF_misc_dnsmasq_lines: "address=/${LAB_DOMAIN:-lab.internal}/${NB_PEER_IP:-}"
     volumes:
       - pihole_data:/etc/pihole
     networks:
@@ -268,7 +329,7 @@ oservices:
       resources:
         limits:       { memory: 256m }
         reservations: { memory: 64m }
- 
+
   # ------------------------------------------------- Monitoraggio (Dozzle)
   dozzle:
     image: amir20/dozzle:v11.3.5     # versione fissata
@@ -293,70 +354,67 @@ oservices:
       resources:
         limits:       { memory: 128m }
         reservations: { memory: 32m }
- 
-  # --------------------------------------- VPN (opzionale): peer NetBird
-  # Si avvia solo con:  docker compose --profile vpn up -d
-  # Fa da "routing peer": espone 172.30.10.0/24 ai client della VPN.
-  netbird:
-    image: netbirdio/netbird:latest   # fissa un tag dopo la prima prova
-    profiles: [vpn]
-    restart: unless-stopped
-    cap_add: [NET_ADMIN, SYS_ADMIN, SYS_RESOURCE]
-    sysctls:
-      net.ipv4.ip_forward: 1
-    environment:
-      NB_SETUP_KEY: ${NB_SETUP_KEY:-}
-      NB_HOSTNAME: homelab-gw
-      # NB_MANAGEMENT_URL: https://netbird.tuodominio.tld:443   # solo se self-hosted
-    volumes:
-      - netbird_data:/etc/netbird
-    networks:
-      default:
-        ipv4_address: 172.30.10.2
-    logging: *default-logging
-    deploy:
-      resources:
-        limits: { memory: 128m }
- 
+
 # Caddyfile e utenti di Dozzle: creati da Compose (serve Compose >= 2.23.1)
 configs:
   caddyfile:
     content: |
       {
-      	admin off
-      	local_certs      # certificati firmati dalla CA interna di Caddy
+          admin off
+          local_certs                    # certificati firmati dalla CA interna di Caddy
+          skip_install_trust
+          auto_https disable_redirects
+
+          # Traffico non-HTTP: caddy-l4 ascolta solo sull'IP VPN del peer
+          layer4 {
+              tcp/${NB_PEER_IP:-127.0.0.1}:22 {
+                  route {
+                      proxy tcp/gitlab:22
+                  }
+              }
+              tcp/${NB_PEER_IP:-127.0.0.1}:53 {
+                  route {
+                      proxy tcp/172.30.10.53:53
+                  }
+              }
+              udp/${NB_PEER_IP:-127.0.0.1}:53 {
+                  route {
+                      proxy udp/172.30.10.53:53
+                  }
+              }
+          }
       }
- 
+
       passbolt.${LAB_DOMAIN:-lab.internal} {
-      	reverse_proxy https://passbolt:443 {
-      		transport http {
-      			tls_insecure_skip_verify   # certificato self-signed di Passbolt, solo rete interna
-      		}
-      	}
+          reverse_proxy https://passbolt:443 {
+              transport http {
+                  tls_insecure_skip_verify   # certificato self-signed di Passbolt, solo rete interna
+              }
+          }
       }
- 
+
       gitlab.${LAB_DOMAIN:-lab.internal} {
-      	request_body {
-      		max_size 2GB
-      	}
-      	reverse_proxy gitlab:80
+          request_body {
+              max_size 2GB
+          }
+          reverse_proxy gitlab:80
       }
- 
+
       cloud.${LAB_DOMAIN:-lab.internal} {
-      	request_body {
-      		max_size 2GB
-      	}
-      	redir /.well-known/carddav /remote.php/dav 301
-      	redir /.well-known/caldav /remote.php/dav 301
-      	reverse_proxy nextcloud:80
+          request_body {
+              max_size 2GB
+          }
+          redir /.well-known/carddav /remote.php/dav 301
+          redir /.well-known/caldav /remote.php/dav 301
+          reverse_proxy nextcloud:80
       }
- 
+
       pihole.${LAB_DOMAIN:-lab.internal} {
-      	reverse_proxy dns:80
+          reverse_proxy dns:80
       }
- 
+
       logs.${LAB_DOMAIN:-lab.internal} {
-      	reverse_proxy dozzle:8080
+          reverse_proxy dozzle:8080
       }
   dozzle_users:
     content: |
@@ -365,7 +423,7 @@ configs:
           name: Admin
           email: ${DOZZLE_ADMIN_EMAIL}
           password: ${DOZZLE_ADMIN_HASH}
- 
+
 volumes:
   caddy_data:
   caddy_config:
@@ -380,12 +438,16 @@ volumes:
   gitlab_data:
   nextcloud_data:
   pihole_data:
- 
+  nb_caddy_data:             # creato dal progetto netbird-server (CA del server NetBird)
+    external: true
+
 networks:
   default:
     ipam:
       config:
         - subnet: 172.30.10.0/24
+  nbnet:                     # creata dal progetto netbird-server
+    external: true
   passbolt_net:
     internal: true
   gitlab_net:

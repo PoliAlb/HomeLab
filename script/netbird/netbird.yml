@@ -1,0 +1,152 @@
+# Server NetBird self-hosted (progetto separato dal laboratorio).
+# Avvio:  cd netbird-server && docker compose up -d   (.env = link simbolico a ../.env, creato da env.sh)
+#
+# Pubblica sull'host (rootless: tutte porte > 1024):
+#   8443/tcp  dashboard + API + gRPC (signal/management) + relay, dietro TLS di Caddy
+#   3478/udp  STUN
+# Crea la rete "nbnet" e il volume "nb_caddy_data" usati dal compose del laboratorio.
+# Apri 8443/tcp e 3478/udp nel firewall dell'host (es. ufw allow 8443/tcp; ufw allow 3478/udp).
+name: netbird-server
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # TLS davanti a tutto: CA interna di Caddy (il dominio .home.arpa non può usare Let's Encrypt)
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    volumes:
+      - caddy_data:/data        # contiene la CA: root.crt va importato sui client
+      - caddy_config:/config
+    ports:
+      - "8443:8443"
+    networks:
+      nbnet:
+        aliases:
+          - ${NB_SERVER_HOST:-netbird.home.arpa}   # il peer del lab e il server stesso lo risolvono qui
+    healthcheck:
+      # sano solo quando la CA esiste già (la leggono netbird-server e il peer del lab)
+      test: ["CMD-SHELL", "test -f /data/caddy/pki/authorities/local/root.crt && nc -z localhost 8443"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    logging: *default-logging
+
+  dashboard:
+    image: netbirdio/dashboard:latest   # fissa un tag dopo la prima prova
+    restart: unless-stopped
+    environment:
+      NETBIRD_MGMT_API_ENDPOINT: https://${NB_SERVER_HOST:-netbird.home.arpa}:8443
+      NETBIRD_MGMT_GRPC_API_ENDPOINT: https://${NB_SERVER_HOST:-netbird.home.arpa}:8443
+      AUTH_AUDIENCE: netbird-dashboard
+      AUTH_CLIENT_ID: netbird-dashboard
+      AUTH_CLIENT_SECRET: ""
+      AUTH_AUTHORITY: https://${NB_SERVER_HOST:-netbird.home.arpa}:8443/oauth2
+      USE_AUTH0: "false"
+      AUTH_SUPPORTED_SCOPES: openid profile email groups
+      AUTH_REDIRECT_URI: /nb-auth
+      AUTH_SILENT_REDIRECT_URI: /nb-silent-auth
+      NGINX_SSL_PORT: "443"
+      LETSENCRYPT_DOMAIN: none        # il TLS lo fa Caddy
+    networks: [nbnet]
+    logging: *default-logging
+
+  netbird-server:
+    image: netbirdio/netbird-server:latest   # fissa un tag dopo la prima prova
+    restart: unless-stopped
+    depends_on:
+      caddy:
+        condition: service_healthy
+    command: ["--config", "/etc/netbird/config.yaml"]
+    environment:
+      # Il server deve fidarsi della CA di Caddy (valida il proprio issuer via HTTPS)
+      SSL_CERT_FILE: /nbca/caddy/pki/authorities/local/root.crt
+    configs:
+      - source: nb_config
+        target: /etc/netbird/config.yaml
+    volumes:
+      - netbird_data:/var/lib/netbird   # database, chiavi: includere nei backup
+      - caddy_data:/nbca:ro
+    ports:
+      - "3478:3478/udp"                 # STUN
+    networks: [nbnet]
+    logging: *default-logging
+
+configs:
+  caddyfile:
+    content: |
+      {
+          admin off
+          local_certs
+          skip_install_trust
+          auto_https disable_redirects
+      }
+
+      ${NB_SERVER_HOST:-netbird.home.arpa}:8443 {
+          # gRPC (signal + management): backend HTTP/2 in chiaro
+          @grpc path /signalexchange.SignalExchange/* /management.ManagementService/* /management.ProxyService/*
+          handle @grpc {
+              reverse_proxy h2c://netbird-server:80 {
+                  flush_interval -1
+              }
+          }
+
+          # relay (WebSocket), API REST, IdP integrato
+          @backend path /relay* /ws-proxy/* /api* /oauth2*
+          handle @backend {
+              reverse_proxy netbird-server:80
+          }
+
+          # tutto il resto: dashboard
+          handle {
+              reverse_proxy dashboard:80
+          }
+      }
+  nb_config:
+    content: |
+      server:
+        listenAddress: ":80"
+        exposedAddress: "https://${NB_SERVER_HOST:-netbird.home.arpa}:8443"
+        stunPorts:
+          - 3478
+        metricsPort: 9090
+        healthcheckAddress: ":9000"
+        logLevel: "info"
+        logFile: "console"
+        authSecret: "${NB_AUTH_SECRET:?esegui ./env.sh}"
+        dataDir: "/var/lib/netbird"
+        auth:
+          issuer: "https://${NB_SERVER_HOST:-netbird.home.arpa}:8443/oauth2"
+          signKeyRefreshEnabled: true
+          dashboardRedirectURIs:
+            - "https://${NB_SERVER_HOST:-netbird.home.arpa}:8443/nb-auth"
+            - "https://${NB_SERVER_HOST:-netbird.home.arpa}:8443/nb-silent-auth"
+          cliRedirectURIs:
+            - "http://localhost:53000/"
+        reverseProxy:
+          trustedHTTPProxies:
+            - "172.31.0.0/24"
+        store:
+          engine: "sqlite"
+          encryptionKey: "${NB_ENCRYPTION_KEY:?esegui ./env.sh}"
+
+volumes:
+  caddy_data:
+    name: nb_caddy_data     # nome fisso: lo usa anche il compose del laboratorio
+  caddy_config:
+  netbird_data:
+
+networks:
+  nbnet:
+    name: nbnet             # nome fisso: lo usa anche il compose del laboratorio
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24

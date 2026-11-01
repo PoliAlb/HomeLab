@@ -8,6 +8,29 @@ Questo homelab non gestisce anche le misure di sicurezza che per come è gestito
 
 ## Setup
 
+```bash
+chmod +x script/env.sh
+./script/env.sh
+```
+
+```bash
+docker compose --env-file script/.env -f script/netbird/netbird.yml up -d
+```
+
+```bash
+echo "NB_PEER_IP=$(docker compose --env-file script/.env -f script/homelab.yml exec -T netbird sh -c "ip -4 -o addr show wt0 | awk '{print \$4}' | cut -d/ -f1")" >> script/.env
+```
+
+
+```bash
+docker compose --env-file script/.env -f script/homelab.yml up -d
+```
+
+```bash
+curl -fsSL https://pkgs.netbird.io/install.sh | sh
+netbird up --management-url https://netbird.home.arpa:8443 --setup-key
+```
+
 ### 🔑 crazioni delle chiavi 
 
 ```bash
