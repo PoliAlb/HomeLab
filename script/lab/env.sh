@@ -3,6 +3,7 @@
 # Non sovrascrive un .env esistente.
 set -euo pipefail
 cd "$(dirname "$0")"
+mkdir -p ../netbird && ln -sfn ../lab/.env ../netbird/.env
 
 NB_HOST=netbird.home.arpa
 

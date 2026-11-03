@@ -1,1 +1,3 @@
-script/.env
+script/lab/.env
+script/netbird/.env
+script/lab/caddy-lab-root.crt

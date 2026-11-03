@@ -8,6 +8,37 @@ Questo homelab non gestisce anche le misure di sicurezza che per come è gestito
 
 ## Setup
 
+### Porte
+
+```bash
+# controllo valore attuale
+sudo sysctl net.ipv4.ip_unprivileged_port_start
+```
+
+```bash
+sudo sysctl -w net.ipv4.ip_unprivileged_port_start=22
+```
+
+```bash
+# permanente
+echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-rootless-ports.conf
+sudo sysctl --system
+```
+
+```bash
+echo '127.0.0.1  passbolt.lab.internal gitlab.lab.internal cloud.lab.internal pihole.lab.internal logs.lab.internal git-ssh.lab.internal' | sudo tee -a /etc/hosts
+```
+
+```bash
+sudo sed -i '/lab\.internal/d' /etc/hosts
+```
+
+```bash
+docker compose -f script/lab/homelab.yml -f script/lab/homelab.local.yml cp caddy:/data/caddy/pki/authorities/local/root.crt script/lab/caddy-lab-root.crt
+```
+
+### Servizi
+
 ```bash
 chmod +x script/env.sh
 ./script/env.sh
@@ -15,6 +46,7 @@ chmod +x script/env.sh
 
 ```bash
 docker compose --env-file script/.env -f script/netbird/netbird.yml up -d
+#docker compose -f homelab.yml -f homelab.local.yml up -d 
 ```
 
 ```bash
@@ -31,20 +63,7 @@ curl -fsSL https://pkgs.netbird.io/install.sh | sh
 netbird up --management-url https://netbird.home.arpa:8443 --setup-key
 ```
 
-### 🔑 crazioni delle chiavi 
-
-```bash
-chmod +x env.sh
-./env.sh
-```
-Questa operazione può essere fatta una sola volta per ogni homelab.
-
-### Avvio dei servizi
-```bash
-docker compose -f compose.yml up -d
-```
-
-## 📊🎛️ [Dozzle (control pannel)](https://dozzle.dev/)
+## 📊🎛️ [Dozzle (pannello di controllo)](https://dozzle.dev/)
 
 ## 🔐 [Passbolt](https://www.passbolt.com/)
 

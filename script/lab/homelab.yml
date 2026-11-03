@@ -1,10 +1,7 @@
-# Laboratorio: accesso SOLO via VPN NetBird (peer condiviso con Caddy).
-# Prerequisito: il progetto netbird-server/ deve essere già avviato
-# (crea la rete "nbnet" e il volume "nb_caddy_data" usati qui).
-#
-# Avvio in due tempi (una tantum):
-#   1) docker compose up -d netbird     -> il peer si registra, ottiene l'IP 100.x
-#   2) scrivi l'IP in .env (NB_PEER_IP) -> docker compose up -d
+# Laboratorio: servizi + reverse proxy (Caddy). Non dipende dalla VPN.
+# Nessuna porta è pubblicata sull'host: l'ingresso è il peer NetBird
+# (netbird/peer.yml), che instrada verso Caddy (172.30.10.3) e Pi-hole (172.30.10.53).
+# Avvio: docker compose -f homelab.yml up -d --build
 
 # Rotazione dei log: evita che i log JSON di Docker riempiano il disco
 x-logging: &default-logging
@@ -14,63 +11,23 @@ x-logging: &default-logging
     max-file: "3"
 
 services:
-  # ---------------------------------------------------------- VPN: peer NetBird
-  # Caddy vive nel suo network namespace (network_mode: service:netbird),
-  # quindi ascolta direttamente sull'IP 100.x del peer.
-  # Se ricrei questo container, ricrea anche caddy (docker compose up -d lo fa da solo).
-  netbird:
-    image: netbirdio/netbird:latest   # fissa un tag dopo la prima prova
-    restart: unless-stopped
-    cap_add: [NET_ADMIN, SYS_ADMIN, SYS_RESOURCE]
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    environment:
-      NB_SETUP_KEY: ${NB_SETUP_KEY:?crea la setup key nella dashboard NetBird e scrivila in .env}
-      NB_MANAGEMENT_URL: ${NB_MANAGEMENT_URL:-https://netbird.home.arpa:8443}
-      NB_HOSTNAME: homelab-gw
-      # Questo peer non deve prendere i DNS dalla VPN: caddy-l4 usa la porta 53 del peer
-      # e il DNS del container deve restare quello di Docker.
-      NB_DISABLE_DNS: "true"
-      # Il server NetBird usa la CA interna del suo Caddy: la rendiamo fidata
-      SSL_CERT_FILE: /nbca/caddy/pki/authorities/local/root.crt
-    volumes:
-      - netbird_data:/etc/netbird
-      - nb_caddy_data:/nbca:ro
-    networks:
-      default:
-        ipv4_address: 172.30.10.2
-        aliases:                # i container risolvono i nomi pubblici verso caddy
-          - passbolt.${LAB_DOMAIN:-lab.internal}
-          - gitlab.${LAB_DOMAIN:-lab.internal}
-          - cloud.${LAB_DOMAIN:-lab.internal}
-          - pihole.${LAB_DOMAIN:-lab.internal}
-          - logs.${LAB_DOMAIN:-lab.internal}
-      nbnet:                    # per raggiungere il server NetBird per nome
-    healthcheck:
-      # Sano solo quando NB_PEER_IP è valorizzato e wt0 ha davvero quell'indirizzo
-      test:
-        - CMD-SHELL
-        - '[ -n "${NB_PEER_IP:-}" ] && ip -4 addr show wt0 | grep -q "${NB_PEER_IP:-x}/"'
-      interval: 10s
-      timeout: 5s
-      retries: 6
-      start_period: 20s
-    logging: *default-logging
-    deploy:
-      resources:
-        limits:       { memory: 256m }
-        reservations: { memory: 64m }
-
   # ------------------------------------------- Ingresso: Caddy (+ caddy-l4)
   caddy:
     build:
       context: ./proxy
     image: homelab/caddy-l4:2.10
     restart: unless-stopped
-    network_mode: "service:netbird"
+    networks:
+      default:
+        ipv4_address: 172.30.10.3
+        aliases:               # i container risolvono i nomi pubblici verso caddy
+          - passbolt.${LAB_DOMAIN:-lab.internal}
+          - gitlab.${LAB_DOMAIN:-lab.internal}
+          - cloud.${LAB_DOMAIN:-lab.internal}
+          - pihole.${LAB_DOMAIN:-lab.internal}
+          - logs.${LAB_DOMAIN:-lab.internal}
+          - git-ssh.${LAB_DOMAIN:-lab.internal}
     depends_on:
-      netbird:
-        condition: service_healthy
       passbolt:
         condition: service_started
       gitlab:
@@ -274,8 +231,8 @@ services:
       OVERWRITEHOST: cloud.${LAB_DOMAIN:-lab.internal}
       OVERWRITEPROTOCOL: https
       OVERWRITECLIURL: https://cloud.${LAB_DOMAIN:-lab.internal}
-      # Caddy esce ora con l'IP del container netbird (stesso netns)
-      TRUSTED_PROXIES: 172.30.10.2
+      # Caddy ha un IP proprio sulla rete del lab
+      TRUSTED_PROXIES: 172.30.10.3
       PHP_MEMORY_LIMIT: 512M
       PHP_UPLOAD_LIMIT: 2G
     volumes:
@@ -298,21 +255,17 @@ services:
           memory: 256m
 
   # ---------------------------------------------------------------- Pi-hole
-  # Nessuna porta pubblicata: i client VPN arrivano alla 53 del peer e
-  # caddy-l4 gira le query qui. Il dominio interno è un wildcard verso l'IP 100.x
-  # del peer (NB_PEER_IP), dove ascoltano caddy (443) e caddy-l4 (22, 53).
+  # Nessuna porta pubblicata: i client VPN raggiungono 172.30.10.53 tramite la route
+  # NetBird. Il dominio interno è un wildcard verso Caddy (172.30.10.3).
   dns:
     image: pihole/pihole:latest
     restart: unless-stopped
-    depends_on:
-      netbird:
-        condition: service_healthy   # garantisce che NB_PEER_IP sia valorizzato
     environment:
       TZ: Europe/Rome
       FTLCONF_webserver_api_password: ${PIHOLE_PASSWORD}
       FTLCONF_dns_listeningMode: all
       FTLCONF_dns_upstreams: "1.1.1.1;9.9.9.9"
-      FTLCONF_misc_dnsmasq_lines: "address=/${LAB_DOMAIN:-lab.internal}/${NB_PEER_IP:-}"
+      FTLCONF_misc_dnsmasq_lines: "address=/${LAB_DOMAIN:-lab.internal}/172.30.10.3"
     volumes:
       - pihole_data:/etc/pihole
     networks:
@@ -365,21 +318,11 @@ configs:
           skip_install_trust
           auto_https disable_redirects
 
-          # Traffico non-HTTP: caddy-l4 ascolta solo sull'IP VPN del peer
+          # Traffico non-HTTP: SSH di GitLab
           layer4 {
-              tcp/${NB_PEER_IP:-127.0.0.1}:22 {
+              tcp/:22 {
                   route {
                       proxy tcp/gitlab:22
-                  }
-              }
-              tcp/${NB_PEER_IP:-127.0.0.1}:53 {
-                  route {
-                      proxy tcp/172.30.10.53:53
-                  }
-              }
-              udp/${NB_PEER_IP:-127.0.0.1}:53 {
-                  route {
-                      proxy udp/172.30.10.53:53
                   }
               }
           }
@@ -427,7 +370,6 @@ configs:
 volumes:
   caddy_data:
   caddy_config:
-  netbird_data:
   db_passbolt:
   db_gitlab:
   db_nextcloud:
@@ -438,16 +380,14 @@ volumes:
   gitlab_data:
   nextcloud_data:
   pihole_data:
-  nb_caddy_data:             # creato dal progetto netbird-server (CA del server NetBird)
-    external: true
 
 networks:
   default:
+    name: homelab_net        # nome fisso: lo usa il peer in netbird/peer.yml
     ipam:
       config:
         - subnet: 172.30.10.0/24
-  nbnet:                     # creata dal progetto netbird-server
-    external: true
+          ip_range: 172.30.10.128/25   # IP dinamici solo da .128 a .254
   passbolt_net:
     internal: true
   gitlab_net:

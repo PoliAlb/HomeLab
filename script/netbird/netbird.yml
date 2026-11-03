@@ -1,5 +1,6 @@
 # Server NetBird self-hosted (progetto separato dal laboratorio).
-# Avvio:  cd netbird-server && docker compose up -d   (.env = link simbolico a ../.env, creato da env.sh)
+# Avvio:  cd script/netbird && docker compose -f netbird.yml up -d
+#         (.env = link simbolico a ../lab/.env, creato da env.sh)
 #
 # Pubblica sull'host (rootless: tutte porte > 1024):
 #   8443/tcp  dashboard + API + gRPC (signal/management) + relay, dietro TLS di Caddy

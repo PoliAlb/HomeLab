@@ -1,0 +1,54 @@
+# Peer NetBird del laboratorio: routing peer verso la rete homelab_net.
+# Prerequisiti: server NetBird avviato (netbird.yml) e lab avviato (../lab/homelab.yml),
+# perché creano le reti "nbnet" e "homelab_net" e il volume "nb_caddy_data".
+name: homelab-vpn
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  netbird:
+    image: netbirdio/netbird:latest   # fissa un tag dopo la prima prova
+    restart: unless-stopped
+    cap_add: [NET_ADMIN, SYS_ADMIN, SYS_RESOURCE]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      net.ipv4.ip_forward: "1"        # serve per instradare wt0 -> rete del lab
+    environment:
+      NB_SETUP_KEY: ${NB_SETUP_KEY:?crea la setup key nella dashboard NetBird e scrivila in .env}
+      NB_MANAGEMENT_URL: ${NB_MANAGEMENT_URL:-https://netbird.home.arpa:8443}
+      NB_HOSTNAME: homelab-gw
+      NB_DISABLE_DNS: "true"          # il DNS del container resta quello di Docker
+      SSL_CERT_FILE: /nbca/caddy/pki/authorities/local/root.crt
+    volumes:
+      - netbird_data:/etc/netbird
+      - nb_caddy_data:/nbca:ro
+    networks:
+      - homelab_net                   # per raggiungere Caddy e Pi-hole
+      - nbnet                         # per raggiungere il server NetBird per nome
+    healthcheck:
+      test: ["CMD-SHELL", "ip link show wt0 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:       { memory: 256m }
+        reservations: { memory: 64m }
+
+volumes:
+  netbird_data:
+  nb_caddy_data:
+    external: true
+
+networks:
+  homelab_net:
+    external: true
+  nbnet:
+    external: true
