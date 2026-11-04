@@ -16,6 +16,7 @@ services:
     build:
       context: ./proxy
     image: homelab/caddy-l4:2.10
+    container_name: Ermes
     restart: unless-stopped
     networks:
       default:
@@ -25,8 +26,9 @@ services:
           - gitlab.${LAB_DOMAIN:-lab.internal}
           - cloud.${LAB_DOMAIN:-lab.internal}
           - pihole.${LAB_DOMAIN:-lab.internal}
-          - logs.${LAB_DOMAIN:-lab.internal}
+          - monitor.${LAB_DOMAIN:-lab.internal}
           - git-ssh.${LAB_DOMAIN:-lab.internal}
+          - pdf.${LAB_DOMAIN:-lab.internal}
     depends_on:
       passbolt:
         condition: service_started
@@ -36,7 +38,10 @@ services:
         condition: service_started
       dns:
         condition: service_started
-      dozzle:
+      beszel:
+        condition: service_started
+        required: false
+      stirling-pdf:
         condition: service_started
     configs:
       - source: caddyfile
@@ -59,6 +64,7 @@ services:
   # ---------------------------------------------------------------- Passbolt
   db-passbolt:
     image: postgres:16
+    container_name: Atlante-Passbolt
     restart: unless-stopped
     environment:
       POSTGRES_USER: passbolt
@@ -80,6 +86,7 @@ services:
 
   passbolt:
     image: passbolt/passbolt:latest-ce
+    container_name: Ade
     restart: unless-stopped
     depends_on:
       db-passbolt:
@@ -116,6 +123,7 @@ services:
   # ------------------------------------------------------------------ GitLab
   db-gitlab:
     image: postgres:16
+    container_name: Atlante-GitLab
     restart: unless-stopped
     command: postgres -c max_locks_per_transaction=512
     environment:
@@ -137,7 +145,8 @@ services:
         reservations: { memory: 512m }
 
   gitlab:
-    image: gitlab/gitlab-ce:latest
+    image: gitlab/gitlab-ce:19.5.3-ce.0
+    container_name: Efesto
     restart: unless-stopped
     hostname: gitlab.${LAB_DOMAIN:-lab.internal}
     depends_on:
@@ -194,6 +203,7 @@ services:
   # --------------------------------------------------------------- Nextcloud
   db-nextcloud:
     image: postgres:16
+    container_name: Atlante-NetxCloud
     restart: unless-stopped
     environment:
       POSTGRES_USER: nextcloud
@@ -215,6 +225,7 @@ services:
 
   nextcloud:
     image: nextcloud:apache
+    container_name: Demetra
     restart: unless-stopped
     depends_on:
       db-nextcloud:
@@ -254,12 +265,30 @@ services:
         reservations:
           memory: 256m
 
+  # ---------------------------------------------------------- Stirling-PDF
+  stirling-pdf:
+    image: stirlingtools/stirling-pdf:latest   # fissa un tag dopo la prima prova
+    container_name: Dedalo
+    restart: unless-stopped
+    environment:
+      LANGS: it_IT
+    volumes:
+      - stirling_configs:/configs
+      - stirling_tessdata:/usr/share/tessdata  # lingue OCR aggiuntive
+    networks: [default]
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:       { memory: 2g }
+        reservations: { memory: 512m }
+
   # ---------------------------------------------------------------- Pi-hole
   # Nessuna porta pubblicata: i client VPN raggiungono 172.30.10.53 tramite la route
   # NetBird. Il dominio interno è un wildcard verso Caddy (172.30.10.3).
   dns:
     image: pihole/pihole:latest
     restart: unless-stopped
+    container_name: Apollo
     environment:
       TZ: Europe/Rome
       FTLCONF_webserver_api_password: ${PIHOLE_PASSWORD}
@@ -284,29 +313,45 @@ services:
         reservations: { memory: 64m }
 
   # ------------------------------------------------- Monitoraggio (Dozzle)
-  dozzle:
-    image: amir20/dozzle:v11.3.5     # versione fissata
+  beszel:
+    image: henrygd/beszel:latest   # fissa un tag dopo la prima prova
+    container_name: Zeus
     restart: unless-stopped
-    cap_drop: [ALL]
+    environment:
+      APP_URL: https://monitor.${LAB_DOMAIN:-lab.internal}
+    volumes:
+      - beszel_data:/beszel_data
+      - beszel_socket:/beszel_socket
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "/beszel", "health", "--url", "http://localhost:8090"]
+      interval: 120s
+      start_period: 10s
+      timeout: 5s
+    deploy:
+      resources:
+        limits: { memory: 128m }
+
+  beszel-agent:
+    image: henrygd/beszel-agent:latest
+    container_name: Aquila
+    restart: unless-stopped
+    depends_on: [beszel]
     security_opt:
       - no-new-privileges:true
     environment:
-      DOZZLE_AUTH_PROVIDER: simple
+      LISTEN: /beszel_socket/beszel.sock
+      KEY: ${BESZEL_KEY:-}
+      TOKEN: ${BESZEL_TOKEN:-}
+      HUB_URL: http://beszel:8090
     volumes:
-      - ${DOCKER_SOCK:?definisci DOCKER_SOCK nel .env}:/var/run/docker.sock
-    configs:
-      - source: dozzle_users
-        target: /data/users.yml
-    healthcheck:
-      test: ["CMD", "/dozzle", "healthcheck"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+      - beszel_agent_data:/var/lib/beszel-agent
+      - beszel_socket:/beszel_socket
+      - ${DOCKER_SOCK:?definisci DOCKER_SOCK nel .env}:/var/run/docker.sock:ro
     logging: *default-logging
     deploy:
       resources:
-        limits:       { memory: 128m }
-        reservations: { memory: 32m }
+        limits: { memory: 64m }
 
 # Caddyfile e utenti di Dozzle: creati da Compose (serve Compose >= 2.23.1)
 configs:
@@ -356,16 +401,16 @@ configs:
           reverse_proxy dns:80
       }
 
-      logs.${LAB_DOMAIN:-lab.internal} {
-          reverse_proxy dozzle:8080
+      pdf.${LAB_DOMAIN:-lab.internal} {
+          request_body {
+              max_size 500MB
+          }
+          reverse_proxy stirling-pdf:8080
       }
-  dozzle_users:
-    content: |
-      users:
-        admin:
-          name: Admin
-          email: ${DOZZLE_ADMIN_EMAIL}
-          password: ${DOZZLE_ADMIN_HASH}
+
+      monitor.${LAB_DOMAIN:-lab.internal} {
+          reverse_proxy beszel:8090
+      }
 
 volumes:
   caddy_data:
@@ -380,6 +425,11 @@ volumes:
   gitlab_data:
   nextcloud_data:
   pihole_data:
+  stirling_configs:
+  stirling_tessdata:
+  beszel_data:
+  beszel_socket:
+  beszel_agent_data:
 
 networks:
   default:
