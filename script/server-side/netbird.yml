@@ -27,14 +27,14 @@ services:
       - caddy_data:/data        # contiene la CA: root.crt va importato sui client
       - caddy_config:/config
     ports:
-      - "8443:8443"
+      - "443:443"
     networks:
       nbnet:
         aliases:
           - ${NB_SERVER_HOST:-netbird.home.arpa}   # il peer del lab e il server stesso lo risolvono qui
     healthcheck:
       # sano solo quando la CA esiste già (la leggono netbird-server e il peer del lab)
-      test: ["CMD-SHELL", "test -f /data/caddy/pki/authorities/local/root.crt && nc -z localhost 8443"]
+      test: ["CMD-SHELL", "test -f /data/caddy/pki/authorities/local/root.crt && nc -z localhost 443"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -45,12 +45,12 @@ services:
     image: netbirdio/dashboard:latest   # fissa un tag dopo la prima prova
     restart: unless-stopped
     environment:
-      NETBIRD_MGMT_API_ENDPOINT: https://${NB_SERVER_HOST:-netbird.home.arpa}:8443
-      NETBIRD_MGMT_GRPC_API_ENDPOINT: https://${NB_SERVER_HOST:-netbird.home.arpa}:8443
+      NETBIRD_MGMT_API_ENDPOINT: https://${NB_SERVER_HOST:-netbird.home.arpa}:443
+      NETBIRD_MGMT_GRPC_API_ENDPOINT: https://${NB_SERVER_HOST:-netbird.home.arpa}:443
       AUTH_AUDIENCE: netbird-dashboard
       AUTH_CLIENT_ID: netbird-dashboard
       AUTH_CLIENT_SECRET: ""
-      AUTH_AUTHORITY: https://${NB_SERVER_HOST:-netbird.home.arpa}:8443/oauth2
+      AUTH_AUTHORITY: https://${NB_SERVER_HOST:-netbird.home.arpa}:443/oauth2
       USE_AUTH0: "false"
       AUTH_SUPPORTED_SCOPES: openid profile email groups
       AUTH_REDIRECT_URI: /nb-auth
@@ -91,7 +91,7 @@ configs:
           auto_https disable_redirects
       }
 
-      ${NB_SERVER_HOST:-netbird.home.arpa}:8443 {
+      ${NB_SERVER_HOST:-netbird.home.arpa}:443 {
           # gRPC (signal + management): backend HTTP/2 in chiaro
           @grpc path /signalexchange.SignalExchange/* /management.ManagementService/* /management.ProxyService/*
           handle @grpc {
@@ -115,7 +115,7 @@ configs:
     content: |
       server:
         listenAddress: ":80"
-        exposedAddress: "https://${NB_SERVER_HOST:-netbird.home.arpa}:8443"
+        exposedAddress: "https://${NB_SERVER_HOST:-netbird.home.arpa}:443"
         stunPorts:
           - 3478
         metricsPort: 9090
@@ -125,11 +125,11 @@ configs:
         authSecret: "${NB_AUTH_SECRET:?esegui ./env.sh}"
         dataDir: "/var/lib/netbird"
         auth:
-          issuer: "https://${NB_SERVER_HOST:-netbird.home.arpa}:8443/oauth2"
+          issuer: "https://${NB_SERVER_HOST:-netbird.home.arpa}:443/oauth2"
           signKeyRefreshEnabled: true
           dashboardRedirectURIs:
-            - "https://${NB_SERVER_HOST:-netbird.home.arpa}:8443/nb-auth"
-            - "https://${NB_SERVER_HOST:-netbird.home.arpa}:8443/nb-silent-auth"
+            - "https://${NB_SERVER_HOST:-netbird.home.arpa}:443/nb-auth"
+            - "https://${NB_SERVER_HOST:-netbird.home.arpa}:443/nb-silent-auth"
           cliRedirectURIs:
             - "http://localhost:53000/"
         reverseProxy:
