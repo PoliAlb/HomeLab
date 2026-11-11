@@ -1,3 +1,2 @@
-script/lab/.env
-script/netbird/.env
-script/lab/caddy-lab-root.crt
+script/server-side/.env
+script/server-side/cert/*

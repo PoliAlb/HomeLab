@@ -18,8 +18,8 @@ Le CA vanno installate **prima** di collegarsi, altrimenti il client NetBird e i
 Le due CA sono generate entrambe da Caddy e potrebbero avere lo stesso nome: per distinguerle usa l'impronta digitale.
 
 ```bash
-openssl x509 -in netbird-ca.crt -noout -subject -fingerprint -sha256
-openssl x509 -in caddy-lab-root.crt -noout -subject -fingerprint -sha256
+openssl x509 -in script/server-side/cert/netbird-ca.crt -noout -subject -fingerprint -sha256
+openssl x509 -in script/server-side/cert/caddy-lab-root.crt -noout -subject -fingerprint -sha256
 ```
 
 ### Firefox
