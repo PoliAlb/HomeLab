@@ -95,3 +95,20 @@ Per **rimuovere** le voci in un secondo momento: `sudo sed -i '/lab\.internal/d'
 **2. Installa la CA del laboratorio**
 
 Importa `caddy-lab-root.crt` tra le autorità attendibili del browser o del sistema, come nella sezione [Installare le CA](#installare-le-ca); per annullare vedi [Rimuovere le CA](#rimuovere-le-ca). Senza questo passo compare l'avviso sul certificato.
+
+--- 
+
+### ! TEST !
+
+```bash
+docker build -f script/client-side/test/Dockerfile -t netbird-client-test .
+```
+
+```bash
+docker run -it --rm --name nb-client \
+  --cap-add NET_ADMIN --cap-add SYS_ADMIN --cap-add SYS_RESOURCE \
+  --device /dev/net/tun \
+  -e NB_SERVER_IP=192.168.x.x \
+  -e NB_SETUP_KEY=la_tua_chiave \
+  netbird-client-test
+```

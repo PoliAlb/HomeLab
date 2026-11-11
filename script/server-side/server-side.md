@@ -104,31 +104,6 @@ echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-rootl
 sudo sysctl --system
 ```
 
-## Avvio senza VPN
-
-Il laboratorio è raggiungibile solo dalla macchina che ospita Docker, tramite porte pubblicate su `127.0.0.1`.
-
-Non avviare questa modalità insieme al server NetBird: entrambe usano la porta 443.
-
-### 1. Avvia il laboratorio
-
-```bash
-docker compose -f homelab.yml -f homelab.local.yml up -d --build
-docker compose -f homelab.yml ps
-```
-
-GitLab diventa `healthy` dopo circa 5 minuti.
-
-### 2. Prepara l'accesso dalla stessa macchina
-
-Estrai la CA di Caddy:
-
-```bash
-docker compose -f homelab.yml cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-lab-root.crt
-```
-
-Poi aggiungi i nomi dei servizi a `/etc/hosts` e importa la CA nel browser o nel sistema: i passi sono in [client-side.md → Accesso senza VPN](../client-side/client-side.md#accesso-senza-vpn).
-
 ## Avvio con VPN
 
 Il laboratorio non pubblica nessuna porta: i client entrano da un tunnel NetBird. L'ordine dei passi conta, perché ogni progetto crea una rete o un volume usati dal successivo.
@@ -169,15 +144,15 @@ NB_SETUP_KEY=la-tua-chiave
 Crea la rete `homelab_net`.
 
 ```bash
-docker compose -f homelab.yml up -d --build
-docker compose -f homelab.yml exec dns dig +short @127.0.0.1 gitlab.lab.internal   # atteso: 172.30.10.3
+docker compose -f script/server-side/homelab.yml up -d --build
+docker compose -f script/server-side/homelab.yml exec dns dig +short @127.0.0.1 gitlab.lab.internal   # atteso: 172.30.10.3
 ```
 
 ### 5. Avvia il peer
 
 ```bash
-docker compose --env-file .env -f peer.yml up -d
-docker compose --env-file .env -f peer.yml exec netbird netbird status   # Management: Connected
+docker compose -f script/server-side/peer.yml up -d
+docker compose -f script/server-side/peer.yml exec netbird netbird status   # Management: Connected
 ```
 
 ### 6. Configura la dashboard NetBird

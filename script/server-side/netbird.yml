@@ -128,8 +128,8 @@ configs:
           issuer: "https://${NB_SERVER_HOST:-netbird.home.arpa}:443/oauth2"
           signKeyRefreshEnabled: true
           dashboardRedirectURIs:
-            - "https://${NB_SERVER_HOST:-netbird.home.arpa}:443/nb-auth"
-            - "https://${NB_SERVER_HOST:-netbird.home.arpa}:443/nb-silent-auth"
+            - "https://${NB_SERVER_HOST:-netbird.home.arpa}/nb-auth"
+            - "https://${NB_SERVER_HOST:-netbird.home.arpa}/nb-silent-auth"
           cliRedirectURIs:
             - "http://localhost:53000/"
         reverseProxy:
