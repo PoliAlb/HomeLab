@@ -7,7 +7,6 @@ Contenuto della cartella:
 | File | Ruolo |
 |---|---|
 | `homelab.yml` | servizi del laboratorio e reverse proxy Caddy (non dipende dalla VPN) |
-| `homelab.local.yml` | overlay per l'uso senza VPN (porte su `127.0.0.1`) |
 | `peer.yml` | peer NetBird: instrada i client VPN verso la rete del laboratorio |
 | `netbird/netbird.yml` | server NetBird self-hosted (progetto separato) |
 | `proxy/Dockerfile` | immagine di Caddy con il modulo `caddy-l4` |
@@ -33,12 +32,12 @@ Contenuto della cartella:
 - cgroup v2 con i controller `cpu`, `memory`, `io` e `pids` delegati
 - Dispositivo `/dev/net/tun` (per il peer NetBird)
 
-### Rete (solo con VPN)
+### Rete
 
 - Porte `443/tcp` e `3478/udp` libere e aperte sull'host per il server NetBird
 - Il nome `netbird.home.arpa` risolvibile dai client
 
-## Preparazione
+## Starting point
 
 ### 1. Scarica il repository
 
@@ -104,11 +103,11 @@ echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-rootl
 sudo sysctl --system
 ```
 
-## Avvio con VPN
+### Avvio
 
 Il laboratorio non pubblica nessuna porta: i client entrano da un tunnel NetBird. L'ordine dei passi conta, perché ogni progetto crea una rete o un volume usati dal successivo.
 
-### 1. Prepara la rete
+#### 1. Prepara la rete
 
 - I client devono risolvere `netbird.home.arpa` verso l'IP LAN dell'host (record sul router o in `/etc/hosts`).
 - Se i client si collegano da fuori dalla LAN, sul router inoltra `443/tcp` e `3478/udp` verso l'host. Se la 443 del router è già inoltrata alla macchina che fa da reverse proxy, non puoi usarla qui. Con client solo in LAN l'inoltro non serve.
@@ -123,7 +122,7 @@ sudo ufw delete allow 443/tcp
 sudo ufw delete allow 3478/udp
 ```
 
-### 2. Avvia il server NetBird
+#### 2. Avvia il server NetBird
 
 ```bash
 docker compose -f script/server-side/netbird.yml up -d
@@ -131,7 +130,7 @@ docker compose -f script/server-side/netbird.yml up -d
 
 Crea la rete `nbnet` e il volume `nb_caddy_data`.
 
-### 3. Crea l'amministratore e la setup key
+#### 3. Crea l'amministratore e la setup key
 
 Apri `https://netbird.home.arpa` (dopo aver installato la CA di NetBird, vedi [Distribuire le CA](#distribuire-le-ca-ai-client)), crea l'utente admin e una **setup key** (assegnale il gruppo `lab-gw`). Scrivila nel `.env`:
 
@@ -139,7 +138,7 @@ Apri `https://netbird.home.arpa` (dopo aver installato la CA di NetBird, vedi [D
 NB_SETUP_KEY=la-tua-chiave
 ```
 
-### 4. Avvia il laboratorio
+#### 4. Avvia i servizi
 
 Crea la rete `homelab_net`.
 
@@ -148,14 +147,14 @@ docker compose -f script/server-side/homelab.yml up -d --build
 docker compose -f script/server-side/homelab.yml exec dns dig +short @127.0.0.1 gitlab.lab.internal   # atteso: 172.30.10.3
 ```
 
-### 5. Avvia il peer
+#### 5. Avvia il peer
 
 ```bash
 docker compose -f script/server-side/peer.yml up -d
 docker compose -f script/server-side/peer.yml exec netbird netbird status   # Management: Connected
 ```
 
-### 6. Configura la dashboard NetBird
+#### 6. Configura la dashboard NetBird
 
 I nomi delle voci possono variare con la versione.
 
@@ -166,7 +165,7 @@ I nomi delle voci possono variare con la versione.
 
 A questo punto i client possono collegarsi: vedi [client-side.md](../client-side/client-side.md).
 
-## Distribuire le CA ai client
+### Distribuire le CA ai client
 
 I certificati sono firmati da due CA interne di Caddy, una per il server NetBird e una per il laboratorio. Ogni client deve installarle entrambe (vedi [client-side.md](../client-side/client-side.md#installare-le-ca)), quindi vanno consegnate agli utenti.
 
@@ -183,76 +182,3 @@ docker compose -f scritp/server-side/homelab.yml cp caddy:/data/caddy/pki/author
 ```
 
 Sono certificati pubblici: si possono consegnare senza particolari cautele, ma verifica che l'utente riceva quelli giusti da una fonte fidata.
-
-## Configurazione dei servizi
-
-### Beszel
-
-L'hub parte con il laboratorio; l'agent si avvia dopo aver ottenuto chiave e token.
-
-1. Apri `https://monitor.lab.internal` e crea l'utente amministratore.
-2. Aggiungi un nuovo sistema. Beszel mostra la chiave pubblica e un token. Come host usa il socket Unix `/beszel_socket/beszel.sock`, condiviso con l'agent.
-3. Scrivi `BESZEL_KEY` e `BESZEL_TOKEN` nel `.env`.
-4. Avvia l'agent:
-
-```bash
-docker compose -f homelab.yml up -d beszel-agent
-```
-
-### Passbolt
-
-La pagina di Passbolt chiede il login o il reset della passphrase di un utente già esistente. Per creare il primo utente (o uno nuovo) esegui:
-
-```bash
-docker compose -f homelab.yml exec passbolt su -m -c "/usr/share/php/passbolt/bin/cake \
-  passbolt register_user \
-  -u <tuaemail@example.com> \
-  -f <Nome> \
-  -l <Cognome> \
-  -r admin" -s /bin/sh www-data
-```
-
-Il comando restituisce un link: aprilo nel browser e segui la procedura di creazione dell'account.
-
-### Nextcloud
-
-Al primo avvio viene creato l'utente `admin` (l'installazione richiede 1-2 minuti). La password è `NEXTCLOUD_ADMIN_PASSWORD` nel `.env`:
-
-```bash
-grep NEXTCLOUD_ADMIN_PASSWORD .env
-```
-
-Il compose imposta già dominio, protocollo HTTPS e proxy fidato (Caddy, `172.30.10.3`), e il limite di upload è 2 GB.
-
-### GitLab
-
-Al primo avvio (alcuni minuti) viene creato l'utente **root**, con l'email `GITLAB_ROOT_EMAIL` e la password `GITLAB_ROOT_PASSWORD` del `.env`:
-
-```bash
-grep -E 'GITLAB_ROOT_(EMAIL|PASSWORD)' .env
-```
-
-L'SSH passa da Caddy (`caddy-l4`, porta 22 del peer VPN verso `gitlab:22`) ed è annunciato come `git-ssh.lab.internal`.
-
-### Pi-hole
-
-La password dell'interfaccia (`https://pihole.lab.internal/admin`) è `PIHOLE_PASSWORD` nel `.env`:
-
-```bash
-grep PIHOLE_PASSWORD .env
-```
-
-Il dominio interno è un wildcard verso Caddy, impostato dal compose. I record locali aggiuntivi si creano da Settings → Local DNS → DNS Records.
-
-Test dal container:
-
-```bash
-docker compose -f homelab.yml exec dns dig +short @127.0.0.1 example.com
-```
-
-## Backup
-
-Oltre ai volumi dei database, includi nei backup:
-
-- `caddy_data`: contiene la CA interna del laboratorio. Se la perdi, devi reinstallare la nuova CA su tutti i client.
-- i dati del server NetBird (`netbird_data`: database e chiavi) e il volume `nb_caddy_data`, che contiene la CA del server NetBird.

@@ -74,31 +74,7 @@ ssh -T git@git-ssh.lab.internal
 git clone git@git-ssh.lab.internal:<gruppo>/<progetto>.git
 ```
 
-## Accesso senza VPN
-
-Vale per la macchina che ospita il laboratorio avviato in modalità locale (vedi [server-side.md → Avvio senza VPN](../server-side/server-side.md#avvio-senza-vpn)). Non serve NetBird.
-
-**1. Aggiungi i nomi dei servizi a `/etc/hosts`**
-
-```bash
-echo '127.0.0.1 passbolt.lab.internal gitlab.lab.internal cloud.lab.internal pihole.lab.internal monitor.lab.internal git-ssh.lab.internal pdf.lab.internal' | sudo tee -a /etc/hosts
-```
-
-Controlla che la riga ci sia:
-
-```bash
-grep lab.internal /etc/hosts
-```
-
-Per **rimuovere** le voci in un secondo momento: `sudo sed -i '/lab\.internal/d' /etc/hosts`.
-
-**2. Installa la CA del laboratorio**
-
-Importa `caddy-lab-root.crt` tra le autorità attendibili del browser o del sistema, come nella sezione [Installare le CA](#installare-le-ca); per annullare vedi [Rimuovere le CA](#rimuovere-le-ca). Senza questo passo compare l'avviso sul certificato.
-
---- 
-
-### ! TEST !
+## ! TEST !
 
 ```bash
 docker build -f script/client-side/test/Dockerfile -t netbird-client-test .
