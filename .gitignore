@@ -1,2 +1,5 @@
 script/server-side/.env
+
 script/server-side/cert/*
+
+report.txt
